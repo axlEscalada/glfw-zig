@@ -2,6 +2,7 @@ const std = @import("std");
 const c = @cImport({
     @cInclude("glad/glad.h");
     @cInclude("GLFW/glfw3.h");
+    @cInclude("stb_image.h");
 });
 
 fn errorCallback(err: c_int, description: [*c]const u8) callconv(.C) void {
@@ -36,7 +37,54 @@ fn checkSupportedPlatform() !void {
     }
 }
 
+const Image = struct {
+    width: usize,
+    height: usize,
+    data: []const u8,
+
+    pub fn init(path: [:0]const u8) !Image {
+        var width: c_int = undefined;
+        var height: c_int = undefined;
+        var num_channels: c_int = undefined;
+        const data = c.stbi_load(path, &width, &height, &num_channels, 1) orelse {
+            std.log.err("failed to load image: {s}\n", .{c.stbi_failure_reason()});
+            return error.InvalidData;
+        };
+
+        return .{
+            .width = @intCast(width),
+            .height = @intCast(height),
+            .data = data[0..@intCast(width * height)],
+        };
+    }
+};
+
+fn imgToTexture(image: Image) !c.GLuint {
+    var texture: c.GLuint = undefined;
+
+    c.glGenTextures(1, &texture);
+    c.glBindTexture(c.GL_TEXTURE_2D, texture);
+    c.glTexParameteri(c.GL_TEXTURE_2D, c.GL_TEXTURE_WRAP_S, c.GL_REPEAT);
+    c.glTexParameteri(c.GL_TEXTURE_2D, c.GL_TEXTURE_WRAP_T, c.GL_REPEAT);
+    c.glTexParameteri(c.GL_TEXTURE_2D, c.GL_TEXTURE_MIN_FILTER, c.GL_LINEAR_MIPMAP_LINEAR);
+    c.glTexParameteri(c.GL_TEXTURE_2D, c.GL_TEXTURE_MAG_FILTER, c.GL_LINEAR);
+    c.glTexImage2D(c.GL_TEXTURE_2D, 0, c.GL_RED, @intCast(image.width), @intCast(image.height), 0, c.GL_RED, c.GL_UNSIGNED_BYTE, image.data.ptr);
+    c.glGenerateMipmap(c.GL_TEXTURE_2D);
+    return texture;
+}
+
 pub fn main() !void {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+
+    const alloc = gpa.allocator();
+    const args = try std.process.argsAlloc(alloc);
+    defer std.process.argsFree(alloc, args);
+
+    if (args.len < 2) {
+        std.log.err("No image path given", .{});
+    }
+
     try checkSupportedPlatform();
     if (c.glfwInit() == c.GLFW_FALSE) {
         std.log.err("Failed error init glfw", .{});
@@ -68,13 +116,16 @@ pub fn main() !void {
 
     const vert_shader_source: [*c]const u8 =
         \\#version 330 core
+        \\out vec2 vert_coord_2d;
         \\void main()
         \\{
-        \\  const vec4 vertices[3] = vec4[](
+        \\  const vec4 vertices[4] = vec4[](
         \\      vec4(-0.5, -0.5, 0.0, 1.0),
         \\      vec4(0.5, -0.5, 0.0, 1.0),
-        \\      vec4(0.0, 0.5, 0.0, 1.0)
+        \\      vec4(-0.5, 0.5, 0.0, 1.0),
+        \\      vec4(0.5, 0.5, 0.0, 1.0)
         \\  );
+        \\  vert_coord_2d = vec2(vertices[gl_VertexID].x, vertices[gl_VertexID].y);
         \\  gl_Position = vertices[gl_VertexID];
         \\}
     ;
@@ -84,10 +135,14 @@ pub fn main() !void {
 
     const frag_shader_source: [*c]const u8 =
         \\#version 330
+        \\in vec2 vert_coord_2d;
         \\out vec4 fragment;
+        \\uniform sampler2D tex;
         \\void main()
         \\{
-        \\  fragment = vec4(1.0, 0.0, 0.0, 1.0);
+        \\  vec2 frag_coord = vert_coord_2d + 0.5;
+        \\  frag_coord.y *= -1;
+        \\  fragment = texture(tex, frag_coord);
         \\}
     ;
 
@@ -101,6 +156,10 @@ pub fn main() !void {
     c.glLinkProgram(program);
 
     c.glClearColor(0.0, 0.0, 1.0, 1.0);
+
+    const img = try Image.init(args[1]);
+    const texture = try imgToTexture(img);
+
     while (c.glfwWindowShouldClose(window) == 0) {
         var width: c_int = undefined;
         var height: c_int = undefined;
@@ -111,7 +170,9 @@ pub fn main() !void {
         c.glClear(c.GL_COLOR_BUFFER_BIT);
 
         c.glUseProgram(program);
-        c.glDrawArrays(c.GL_TRIANGLES, 0, 3);
+        c.glActiveTexture(c.GL_TEXTURE0);
+        c.glBindTexture(c.GL_TEXTURE_2D, texture);
+        c.glDrawArrays(c.GL_TRIANGLE_STRIP, 0, 4);
 
         c.glfwSwapBuffers(window);
     }

@@ -1,4 +1,5 @@
 const std = @import("std");
+
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const opt = b.standardOptimizeOption(.{});
@@ -6,7 +7,9 @@ pub fn build(b: *std.Build) void {
     exe.linkSystemLibrary("glfw");
     exe.linkSystemLibrary("GL");
     exe.addCSourceFile(.{ .file = b.path("glad/src/glad.c") });
+    exe.addCSourceFile(.{ .file = b.path("src/stb_image_impl.c") });
     exe.addIncludePath(b.path("glad/include"));
+    exe.addIncludePath(b.path("src"));
     exe.linkLibC();
     b.installArtifact(exe);
 }
