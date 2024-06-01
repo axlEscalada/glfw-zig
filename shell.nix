@@ -11,5 +11,6 @@ in
       glfw
       libGL
       glxinfo
+      ffmpeg
     ];
   }
